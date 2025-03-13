@@ -1,0 +1,176 @@
+---
+title: "SOR3008"
+author: "Shane Gallagher"
+date: "2025-03-10"
+output: html_document
+---
+
+```{r}
+library(readr)  
+library(dplyr)
+library(rpart)
+install.packages("rpart.plot")
+library(rpart.plot)
+install.packages("ROCR")
+library(ROCR)
+```
+
+
+```{r}
+##Import the datasets
+application <- readr::read_csv('application_record.csv')
+credit <- readr::read_csv('credit_record.csv')
+
+##Filter credit records where MONTHS_BALANCE == 0
+credit_current <- credit %>%
+  dplyr::filter(MONTHS_BALANCE == 0) %>%
+  select(-MONTHS_BALANCE) 
+
+##Merge datasets by ID (inner join to keep only matching IDs)
+merged_records <- application %>%
+  inner_join(credit_current, by = "ID") %>%
+  rename(
+    Gender = CODE_GENDER,
+    Car = FLAG_OWN_CAR,
+    Property = FLAG_OWN_REALTY,
+    Children = CNT_CHILDREN, 
+    Income = AMT_INCOME_TOTAL,
+    Income_Type = NAME_INCOME_TYPE,
+    Education = NAME_EDUCATION_TYPE,
+    Marital = NAME_FAMILY_STATUS,
+    Accommodation = NAME_HOUSING_TYPE, 
+    Age = DAYS_BIRTH,
+    Time_Employed = DAYS_EMPLOYED,
+    Mobile_Phone = FLAG_MOBIL,
+    Work_Phone = FLAG_WORK_PHONE, 
+    Phone = FLAG_PHONE,
+    Email = FLAG_EMAIL,
+    Job = OCCUPATION_TYPE, 
+    Family = CNT_FAM_MEMBERS, 
+    Status = STATUS
+  ) %>%
+  mutate(
+    Gender = ifelse(Gender == "M", 0, 1),  ##Make gender binary (M=0, F=1)
+    Car = ifelse(Car == "N", 0, 1),  ## Convert Car ownership (N=0, Y=1)
+    Property = ifelse(Property == "N", 0, 1),  ##Convert Property ownership (N=0, Y=1)
+    Age = abs(Age) / 365.25,  ##Convert to age in years
+    Time_Employed = abs(Time_Employed),  ##Make employment duration positive
+    Mobile_Phone = ifelse(Mobile_Phone == 0, 0, 1),  ##Make binary for the rest (N=0) (Y=1)
+    Work_Phone = ifelse(Work_Phone == 0, 0, 1), 
+    Phone = ifelse(Phone == 0, 0, 1),  
+    Email = ifelse(Email == 0, 0, 1),
+    Status = ifelse(Status == 0, "No", "Yes")
+  )
+```
+
+```{r}
+##No of observations in data
+nobs <- nrow(merged_records)
+
+seed<-3008
+training_prop<-0.7
+validation_prop<-0.1
+
+##Obtain the training rows
+set.seed(seed)
+train <- sample(nobs, training_prop*nobs)
+
+##Obtain the validation rows
+set.seed(seed)
+nobs %>%
+  seq_len() %>%
+  setdiff(train) %>%
+  sample(validation_prop*nobs) ->
+  validate
+
+##Obtain the test rows
+nobs %>%
+  seq_len() %>%
+  setdiff(train) %>%
+  setdiff(validate) ->
+  test
+
+##These are the inputs and target appropriate for the neuro
+inputs <- c("Gender", "Car", "Property", "Children", "Income", "Income_Type", "Education", "Marital",
+    "Accommodation", "Age", "Time_Employed", "Mobile_Phone", "Work_Phone", "Phone", "Email", "Job", "Family")
+target <- "Status"
+
+##Obtain the training, validation and test sets based on the rows identified by train/validate/test
+data_train=merged_records[train, c(inputs, target)]
+nobs_train <-nrow(data_train)
+data_validate=merged_records[validate, c(inputs, target)]
+data_test=merged_records[test, c(inputs, target)]
+
+#Export training, validation and test set in case you need in another program e.g. SAS
+write.csv(data_train,'data_train.csv')
+write.csv(data_validate,'data_validate.csv')
+write.csv(data_test,'data_test.csv')
+
+```
+
+```{r}
+# Build a decision tree model using the correct dataset and variables
+ToPredict <- data_train[,c(target)]
+
+set.seed(seed)
+rpart_results <- rpart(Status ~ Gender + Car + Property + Children + Income + Income_Type + Education + Marital + Accommodation + Age + Time_Employed + Mobile_Phone + Work_Phone + Phone + Email + Job + Family,
+                       data = data_train, # Use the training dataset
+                       method = "class",
+                       parms = list(split="information"),
+                       control = rpart.control(minsplit = 50, minbucket=10, cp = 0,
+                                               xval=10,
+                                               usesurrogate = 0,
+                                               maxsurrogate = 0),
+                       model=TRUE)
+
+##Plot the decision tree
+plot1 <- rpart.plot(rpart_results, digits = 3, cex = 0.6, faclen = 0)
+
+printcp(rpart_results)
+plotcp <- plotcp(rpart_results, minline=TRUE,lty=3, col=1, upper="splits")
+
+##Prune tree based on complexity parameter
+pt<-prune(rpart_results, cp=0.007)
+plot2 <- rpart.plot(pt, digits = 3, cex=0.6, faclen=0)
+
+
+##Make predictions on training data
+pt$predbadStatus<-predict(pt, newdata = data_train, type =
+"prob")[,1]
+pt$predgoodStatus<-predict(pt, newdata = data_train, type =
+"prob")[,2]
+
+##Calculate AUC for training set
+pred <- prediction(pt$predgoodStatus, data_train$Status)
+prf <- performance(pred, measure = "tpr", x.measure = "fpr")
+prf_plot <- plot(prf)
+
+auc <- performance(pred, measure = "auc")
+auc_value <- auc@y.values[[1]]
+
+pt$fitted.results <- ifelse(pt$predgoodStatus >= 0.5,"Yes","No")
+table(pt$fitted.results, data_train$Status)
+
+resubClassificationError <- mean(pt$fitted.results != data_train$Status)
+```
+
+```{r}
+
+ToPredictTest<-data_test[,c(target)]
+
+pt$predbadStatustest<-predict(pt, newdata=data_test, type="prob")[,1]
+pt$predgoodStatustest <- predict(pt, newdata = data_test, type ="prob")[,2]
+
+predtest <- prediction(pt$predbadStatustest, ToPredictTest)
+prftest <- performance(predtest, measure = "tpr", x.measure = "fpr")
+plot(prftest)
+
+auc_test <- performance(predtest, measure = "auc")
+auc_test <- auc_test@y.values[[1]]
+
+pt$fitted.results_test<-ifelse(pt$predbadStatustest>=0.5, "Yes", "No")
+table(pt$fitted.results_test, data_test$Status)
+
+misClassificError<-mean(pt$fitted.results_test != ToPredictTest)
+predaccuracy <- 1-misClassificError
+```
