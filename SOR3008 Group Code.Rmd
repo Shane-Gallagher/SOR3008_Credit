@@ -24,11 +24,11 @@ credit <- readr::read_csv('credit_record.csv')
 ##Filter credit records where MONTHS_BALANCE == 0
 credit_current <- credit %>%
   dplyr::filter(MONTHS_BALANCE == 0) %>%
-  select(-MONTHS_BALANCE) 
+  dplyr::select(-MONTHS_BALANCE)
 
 ##Merge datasets by ID (inner join to keep only matching IDs)
 merged_records <- application %>%
-  inner_join(credit_current, by = "ID") %>%
+  dplyr::inner_join(credit_current, by = "ID") %>%
   rename(
     Gender = CODE_GENDER,
     Car = FLAG_OWN_CAR,
@@ -59,8 +59,9 @@ merged_records <- application %>%
     Work_Phone = ifelse(Work_Phone == 0, 0, 1), 
     Phone = ifelse(Phone == 0, 0, 1),  
     Email = ifelse(Email == 0, 0, 1),
-    Status = ifelse(Status == 0, "No", "Yes")
+    Status = ifelse(Status == 0, 0, 1)
   )
+
 ```
 
 ```{r}
@@ -96,35 +97,46 @@ inputs <- c("Gender", "Car", "Property", "Children", "Income", "Income_Type", "E
 target <- "Status"
 
 ##Obtain the training, validation and test sets based on the rows identified by train/validate/test
-data_train=merged_records[train, c(inputs, target)]
+data_train <- merged_records[train, c(inputs, target)]
 nobs_train <-nrow(data_train)
-data_validate=merged_records[validate, c(inputs, target)]
-data_test=merged_records[test, c(inputs, target)]
+data_validate <- merged_records[validate, c(inputs, target)]
+data_test <- merged_records[test, c(inputs, target)]
+
+for (col in c("Income_Type", "Education", "Marital", "Accommodation", "Job")) {
+  merged_records[[col]] <- as.factor(merged_records[[col]])
+  data_train[[col]] <- as.factor(data_train[[col]])
+  data_validate[[col]] <- as.factor(data_validate[[col]])
+  data_test[[col]] <- as.factor(data_test[[col]])
+}
 
 #Export training, validation and test set in case you need in another program e.g. SAS
 write.csv(data_train,'data_train.csv')
 write.csv(data_validate,'data_validate.csv')
 write.csv(data_test,'data_test.csv')
-
+write.csv(merged_records, 'credit_card.csv')
 ```
 
 ```{r}
 # Build a decision tree model using the correct dataset and variables
-ToPredict <- data_train[,c(target)]
+#ToPredict <- data_train[,c(target)]
 
 set.seed(seed)
 rpart_results <- rpart(Status ~ Gender + Car + Property + Children + Income + Income_Type + Education + Marital + Accommodation + Age + Time_Employed + Mobile_Phone + Work_Phone + Phone + Email + Job + Family,
                        data = data_train, # Use the training dataset
                        method = "class",
                        parms = list(split="information"),
-                       control = rpart.control(minsplit = 50, minbucket=10, cp = 0,
-                                               xval=10,
+                       control = rpart.control(minsplit = 100, minbucket=50, cp = 0,
+                                               xval=1000,
                                                usesurrogate = 0,
                                                maxsurrogate = 0),
                        model=TRUE)
 
 ##Plot the decision tree
 plot1 <- rpart.plot(rpart_results, digits = 3, cex = 0.6, faclen = 0)
+png("decision_tree.png", width = 2400, height = 1800)  # Set file name & resolution
+rpart.plot(rpart_results, digits = 3, cex = 0.6, faclen = 0)
+dev.off()  # Save and close the file
+
 
 printcp(rpart_results)
 plotcp <- plotcp(rpart_results, minline=TRUE,lty=3, col=1, upper="splits")
@@ -141,12 +153,14 @@ pt$predgoodStatus<-predict(pt, newdata = data_train, type =
 "prob")[,2]
 
 ##Calculate AUC for training set
-pred <- prediction(pt$predgoodStatus, data_train$Status)
+pred <- prediction(pt$predgoodStatus, ToPredict)
 prf <- performance(pred, measure = "tpr", x.measure = "fpr")
 prf_plot <- plot(prf)
+prf_plot
 
 auc <- performance(pred, measure = "auc")
 auc_value <- auc@y.values[[1]]
+auc_value
 
 pt$fitted.results <- ifelse(pt$predgoodStatus >= 0.5,"Yes","No")
 table(pt$fitted.results, data_train$Status)
@@ -155,7 +169,6 @@ resubClassificationError <- mean(pt$fitted.results != data_train$Status)
 ```
 
 ```{r}
-
 ToPredictTest<-data_test[,c(target)]
 
 pt$predbadStatustest<-predict(pt, newdata=data_test, type="prob")[,1]
@@ -173,4 +186,134 @@ table(pt$fitted.results_test, data_test$Status)
 
 misClassificError<-mean(pt$fitted.results_test != ToPredictTest)
 predaccuracy <- 1-misClassificError
+
 ```
+Gradient Boosting
+```{r}
+install.packages(gbm)
+library(gbm)
+library(MASS)
+library(xgboost)
+
+
+gbm_model <- gbm(
+  formula = Status ~.,
+  data = data_train,
+  distribution = "gaussian",
+  n.trees = 5000, 
+  interaction.depth = 4,
+  shrinkage = 0.01, 
+  cv.folds = 5
+)
+
+predictions <- predict(gbm_model, newdata= data_test, n.trees = gbm_model$n.trees)
+
+rmse <- sqrt(mean((predictions-data_test$Status)^2))
+print(paste("RMSE:", round(rmse,2)))
+
+summary(gbm_model)
+```
+
+Support Vector Machine
+```{r}
+install.packages('e1071')
+library(e1071)
+
+scaled_data_train <- data_train[-12]
+scaled_data_test <- scale(data_test[-12])
+
+svm <- svm(
+      formula = Status ~ Gender + Car + Property + Children + Income + Income_Type + Education + Marital + Accommodation + Age + Time_Employed + Work_Phone + Phone + Email + Job + Family,
+      data = data_train,
+      type = 'C-classification',
+      kernel = 'linear')
+
+prediction <- predict(svm, newdata = scaled_data_test)
+
+cm = table(scaled_data_test, prediction)
+
+print(cm)
+
+
+library(ElemStatLearn) 
+  
+# Plotting the training data set results 
+set = data_train 
+X1 = seq(min(set[, 1]) - 1, max(set[, 1]) + 1, by = 0.01) 
+X2 = seq(min(set[, 2]) - 1, max(set[, 2]) + 1, by = 0.01) 
+  
+grid_set = expand.grid(X1, X2) 
+colnames(grid_set) = c('Age', 'EstimatedSalary') 
+y_grid = predict(classifier, newdata = grid_set) 
+  
+plot(set[, -3], 
+     main = 'SVM (Training set)', 
+     xlab = 'Age', ylab = 'Estimated Salary', 
+     xlim = range(X1), ylim = range(X2)) 
+  
+contour(X1, X2, matrix(as.numeric(y_grid), length(X1), length(X2)), add = TRUE) 
+  
+points(grid_set, pch = '.', col = ifelse(y_grid == 1, 'coral1', 'aquamarine')) 
+  
+points(set, pch = 21, bg = ifelse(set[, 3] == 1, 'green4', 'red3')) 
+
+```
+
+Neural Network Code
+```{r}
+install.packages(c('neuralnet', 'keras', 'tensorflow'), dependencies = T)
+library(neuralnet)
+data_train <- na.omit(data_train)
+data_test <- na.omit(data_test)
+
+neural_model <- neuralnet(Status ~.,
+                           data = data_train,
+                           hidden = c(4,2), 
+                           linear.output=FALSE)
+
+plot(neural_model,rep = "best")
+
+pred <- predict(neural_model, data_test)
+labels <- c(0, 1)
+prediction_label <- data.frame(max.col(pred)) %>%
+  mutate(pred = labels[max.col(pred)]) %>%
+  pull(pred)   
+
+max(prediction_label)
+table(data_test$Status, prediction_label)
+
+check = as.numeric(data_test$Status) == max.col(pred)
+accuracy = (sum(check)/nrow(data_test))*100
+print(accuracy)
+
+```
+
+
+```{r}
+library(e1071)
+library(pROC)
+
+# Train Naive Bayes model
+nb_model <- naiveBayes(Status ~ ., data=data_train)
+
+# Make predictions
+nb_pred <- predict(nb_model, newdata=data_test, type="class")
+nb_prob <- predict(nb_model, newdata=data_test, type="raw")
+
+# Create confusion matrix
+confusion_matrix_nb <- table(Actual = data_test$Status, Predicted = nb_pred)
+print(confusion_matrix_nb)
+
+# Accuracy
+accuracy_nb <- sum(diag(confusion_matrix_nb)) / sum(confusion_matrix_nb)
+print(paste("Accuracy: ", accuracy_nb))
+
+# Log-Likelihood Calculation
+log_likelihood <- sum(log(nb_prob[cbind(1:nrow(nb_prob), as.numeric(data_test$Status))]))
+print(paste("Log-Likelihood: ", log_likelihood))
+
+# ROC Curve
+roc_curve_nb <- roc(data_test$Status, nb_prob[,2])  # assuming STATUS_NUM is binary for 1 vs 0
+plot(roc_curve_nb, main="ROC Curve for Naive Bayes")
+```
+
