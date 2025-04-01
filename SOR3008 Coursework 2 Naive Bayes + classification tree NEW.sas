@@ -5,8 +5,7 @@ proc freq data=SOR3008.obesity;
 run;
 
 data SOR3008.obesity2;
-    set SOR3008.obesity; /* Replace with your actual dataset name if different */
-    length Is_Obese $3;
+    set SOR3008.obesity;    length Is_Obese $3;
     if NObeyesdad in ('insufficient_weight', 'normal_weight', 'Overweight_Level_I', 'Overweight_Level_II') then Is_Obese = 'no';
     else Is_Obese = 'yes';
 run;
