@@ -1,5 +1,7 @@
 obesity <- read.csv('obesity.csv',header=TRUE)
 
+obesity$obs_num <- 1:nrow(obesity)
+
 str(obesity)
 
 
@@ -41,50 +43,77 @@ cat("Training set size:", nrow(obesity_training), "\n")
 cat("Validation set size:", nrow(obesity_validation), "\n")
 cat("Test set size:", nrow(obesity_test), "\n")
 
+# Export datasets
+write.csv(obesity_test, file = "obesity_test.csv", row.names = TRUE)
+write.csv(obesity_training, file = "obesity_training.csv", row.names = TRUE)
+write.csv(obesity_validation, file = "obesity_validation.csv", row.names = TRUE)
 
-res_logistic <- glm(relevel(Is_Obese, "yes")~ relevel(family_history_with_overweight, "yes") + Age
-                    + relevel(Gender, "Male") + Height + Weight + relevel(FAVC, "yes") + FCVC + NCP + relevel(CAEC, "Always") 
-                    + relevel(SMOKE, "yes") + CH2O + relevel(SCC, "yes") + FAF + TUE + relevel(CALC, "Always")
-                    + MTRANS ,data=obesity,family=binomial())
+
+res_logistic <- glm(relevel(Is_Obese, "no")~ relevel(family_history_with_overweight, "no") + Age
+                    + relevel(Gender, "Female") + Height + Weight + relevel(FAVC, "no") + FCVC + NCP + relevel(CAEC, "no") 
+                    + relevel(SMOKE, "no") + CH2O + relevel(SCC, "yes") + FAF + TUE + relevel(CALC, "no")
+                    + MTRANS ,data=obesity_training,family=binomial())
 
 summary(res_logistic)
+
+
+res_logistic_step <- step(res_logistic,direction="backward",trace=TRUE)
+
+summary(res_logistic_step)
+
+#Testing the logistic regression without stepwise
 
 confint.default(res_logistic)
 exp(cbind(OR=coef(res_logistic),
           confint.default(res_logistic)))
 
-obesity$predprobobese <- predict(res_logistic, newdata = obesity,
-                                type = "response")
-
-summary(obesity)
-obesity$predprobhealthy<-1-obesity$predprobobese
-#If 50% probability cut-off
-obesity$fitted.results <- ifelse(obesity$predprobobese >
-                                 0.5,"yes","no")
-
-obesity
-
-mean(obesity$fitted.results != obesity$Is_Obese)
-
-table(obesity$Is_Obese, obesity$fitted.results)
 
 obesity_test$predprobobese <- predict(res_logistic, newdata = obesity_test
                                        , type = "response")
 obesity_test$predprobhealthy<-1-obesity_test$predprobobese
 obesity_test$fitted.results <- ifelse(obesity_test$predprobobese >
-                                      0.5,"yes","no")
+                                      0.72,"yes","no")
 mean(obesity_test$fitted.results != obesity_test$Is_Obese)
 table(obesity_test$Is_Obese, obesity_test$fitted.results)
 
-install.packages("ROCR")
 library(ROCR)
 
-pr <- prediction(obesity$predprobobese, obesity$Is_Obese)
+pr <- prediction(obesity_test$predprobobese, obesity_test$Is_Obese)
 prf <- performance(pr, measure = "tpr", x.measure = "fpr")
 plot(prf)
 auc <- performance(pr, measure = "auc")
 auc <- auc@y.values[[1]]
 auc
+
+#Testing the logistic regression with stepwise
+
+confint.default(res_logistic_step)
+exp(cbind(OR=coef(res_logistic_step),
+          confint.default(res_logistic_step)))
+
+
+obesity
+
+mean(obesity_test$fitted.results != obesity_test$Is_Obese)
+
+table(obesity_test$Is_Obese, obesity_test$fitted.results)
+
+obesity_test$predprobobese <- predict(res_logistic_step, newdata = obesity_test
+                                      , type = "response")
+obesity_test$predprobhealthy<-1-obesity_test$predprobobese
+obesity_test$fitted.results <- ifelse(obesity_test$predprobobese >
+                                        0.72,"yes","no")
+mean(obesity_test$fitted.results != obesity_test$Is_Obese)
+table(obesity_test$Is_Obese, obesity_test$fitted.results)
+
+library(ROCR)
+
+pr_step <- prediction(obesity_test$predprobobese, obesity_test$Is_Obese)
+prf_step <- performance(pr_step, measure = "tpr", x.measure = "fpr")
+plot(prf_step)
+auc_step <- performance(pr_step, measure = "auc")
+auc_step <- auc_step@y.values[[1]]
+auc_step
 
 
 
