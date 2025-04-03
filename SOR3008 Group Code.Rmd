@@ -6,67 +6,78 @@ output: html_document
 ---
 
 ```{r}
+##Import library
 library(readr)  
 library(dplyr)
 library(rpart)
-install.packages("rpart.plot")
+if (!requireNamespace("rpart.plot", quietly = TRUE)) {
+  install.packages("rpart.plot")
+}
 library(rpart.plot)
-install.packages("ROCR")
+if (!requireNamespace("ROCR", quietly = TRUE)) {
+  install.packages("ROCR")
+}
 library(ROCR)
 ```
 
 
 ```{r}
 ##Import the datasets
-application <- readr::read_csv('application_record.csv')
-credit <- readr::read_csv('credit_record.csv')
+obesity_nonbinary <- readr::read_csv('ObesityDataSet.csv')
 
-##Filter credit records where MONTHS_BALANCE == 0
-credit_current <- credit %>%
-  dplyr::filter(MONTHS_BALANCE == 0) %>%
-  dplyr::select(-MONTHS_BALANCE)
+##Filter and classify overdue Obesity 
+## obese = 1, not obese = 0
+obesity <- obesity_nonbinary %>%
+  mutate(Obesity = ifelse(NObeyesdad %in% c("Obesity_Type_I", "Obesity_Type_II", "Obesity_Type_III"), 1, 0)) %>%
+  select(-NObeyesdad) %>%
+  dplyr::mutate(
+    Gender = ifelse(Gender == "Male", 0, 1),  ##Make gender binary (M=0, F=1)
+    family_history_with_overweight = ifelse(family_history_with_overweight == "no", 0, 1),  ##(N=0, Y=1)
+    FAVC = ifelse(FAVC == "no", 0, 1),  ##(N=0, Y=1)
+    SCC = ifelse(SCC == "no", 0, 1), ##(n=0, y=1)
+    CAEC = as.factor(CAEC),
+    SMOKE = ifelse(SMOKE == "no", 0, 1),
+    CALC = as.factor(CALC),
+    MTRANS = as.factor(MTRANS)
+    )
 
-##Merge datasets by ID (inner join to keep only matching IDs)
-merged_records <- application %>%
-  dplyr::inner_join(credit_current, by = "ID") %>%
-  rename(
-    Gender = CODE_GENDER,
-    Car = FLAG_OWN_CAR,
-    Property = FLAG_OWN_REALTY,
-    Children = CNT_CHILDREN, 
-    Income = AMT_INCOME_TOTAL,
-    Income_Type = NAME_INCOME_TYPE,
-    Education = NAME_EDUCATION_TYPE,
-    Marital = NAME_FAMILY_STATUS,
-    Accommodation = NAME_HOUSING_TYPE, 
-    Age = DAYS_BIRTH,
-    Time_Employed = DAYS_EMPLOYED,
-    Mobile_Phone = FLAG_MOBIL,
-    Work_Phone = FLAG_WORK_PHONE, 
-    Phone = FLAG_PHONE,
-    Email = FLAG_EMAIL,
-    Job = OCCUPATION_TYPE, 
-    Family = CNT_FAM_MEMBERS, 
-    Status = STATUS
-  ) %>%
-  mutate(
-    Gender = ifelse(Gender == "M", 0, 1),  ##Make gender binary (M=0, F=1)
-    Car = ifelse(Car == "N", 0, 1),  ## Convert Car ownership (N=0, Y=1)
-    Property = ifelse(Property == "N", 0, 1),  ##Convert Property ownership (N=0, Y=1)
-    Age = abs(Age) / 365.25,  ##Convert to age in years
-    Time_Employed = abs(Time_Employed),  ##Make employment duration positive
-    Mobile_Phone = ifelse(Mobile_Phone == 0, 0, 1),  ##Make binary for the rest (N=0) (Y=1)
-    Work_Phone = ifelse(Work_Phone == 0, 0, 1), 
-    Phone = ifelse(Phone == 0, 0, 1),  
-    Email = ifelse(Email == 0, 0, 1),
-    Status = ifelse(Status == 0, 0, 1)
-  )
-
+# Check the distribution of obesity
+prop.table(table(obesity$Obesity))
 ```
 
 ```{r}
+library(ggplot2)
+if (!requireNamespace("DataExplorer", quietly = TRUE)) {
+  install.packages("DataExplorer")
+}
+library(DataExplorer)
+if (!requireNamespace("corrplot", quietly = TRUE)) {
+  install.packages("corrplot")
+}
+library(corrplot)
+
+##Check missing values
+missing_summary <- colSums(is.na(obesity))
+missing_summary[missing_summary > 0]  # Display only columns with missing values
+
+##Visualising missingness
+plot_missing(obesity)
+
+##Select only numeric columns
+numeric_features <- obesity %>%
+  select_if(is.numeric)
+
+##Compute correlation matrix
+cor_matrix <- cor(numeric_features)
+
+##Visualize correlations
+corrplot(cor_matrix, method = "color", tl.cex = 0.7, type = "lower")
+```
+
+
+```{r}
 ##No of observations in data
-nobs <- nrow(merged_records)
+nobs <- nrow(obesity)
 
 seed<-3008
 training_prop<-0.7
@@ -92,201 +103,550 @@ nobs %>%
   test
 
 ##These are the inputs and target appropriate for the neuro
-inputs <- c("Gender", "Car", "Property", "Children", "Income", "Income_Type", "Education", "Marital",
-    "Accommodation", "Age", "Time_Employed", "Mobile_Phone", "Work_Phone", "Phone", "Email", "Job", "Family")
-target <- "Status"
+inputs <- c("Gender", "Age", "Height", "Weight", "family_history_with_overweight", "FAVC", "FCVC","NCP","CAEC","SMOKE","CH2O","SCC","FAF","TUE","CALC","MTRANS")
+target <- "Obesity"
 
 ##Obtain the training, validation and test sets based on the rows identified by train/validate/test
-data_train <- merged_records[train, c(inputs, target)]
+data_train <- obesity[train, c(inputs, target)]
 nobs_train <-nrow(data_train)
-data_validate <- merged_records[validate, c(inputs, target)]
-data_test <- merged_records[test, c(inputs, target)]
+data_validate <- obesity[validate, c(inputs, target)]
+data_test <- obesity[test, c(inputs, target)]
 
-for (col in c("Income_Type", "Education", "Marital", "Accommodation", "Job")) {
-  merged_records[[col]] <- as.factor(merged_records[[col]])
-  data_train[[col]] <- as.factor(data_train[[col]])
-  data_validate[[col]] <- as.factor(data_validate[[col]])
-  data_test[[col]] <- as.factor(data_test[[col]])
-}
-
-#Export training, validation and test set in case you need in another program e.g. SAS
+##Export training, validation and test set in case you need in another program e.g. SAS
 write.csv(data_train,'data_train.csv')
 write.csv(data_validate,'data_validate.csv')
 write.csv(data_test,'data_test.csv')
-write.csv(merged_records, 'credit_card.csv')
+write.csv(obesity, 'obesity.csv')
 ```
 
+Classification tree
 ```{r}
-# Build a decision tree model using the correct dataset and variables
+##Build a decision tree model using the correct dataset and variables
 #ToPredict <- data_train[,c(target)]
 
 set.seed(seed)
-rpart_results <- rpart(Status ~ Gender + Car + Property + Children + Income + Income_Type + Education + Marital + Accommodation + Age + Time_Employed + Mobile_Phone + Work_Phone + Phone + Email + Job + Family,
-                       data = data_train, # Use the training dataset
+rpart_results <- rpart(Obesity ~ .,
+                       data = data_train, ##Use the training dataset
                        method = "class",
                        parms = list(split="information"),
-                       control = rpart.control(minsplit = 100, minbucket=50, cp = 0,
-                                               xval=1000,
-                                               usesurrogate = 0,
+                       control = rpart.control(minsplit = 20, minbucket=10, cp = 0,
+                                               xval=10,
                                                maxsurrogate = 0),
                        model=TRUE)
 
 ##Plot the decision tree
-plot1 <- rpart.plot(rpart_results, digits = 3, cex = 0.6, faclen = 0)
-png("decision_tree.png", width = 2400, height = 1800)  # Set file name & resolution
-rpart.plot(rpart_results, digits = 3, cex = 0.6, faclen = 0)
+plot1 <- rpart.plot(rpart_results, digits = 3, cex = 1, faclen = 0)
+png("decision_tree.png", width = 1000, height = 600)  
+rpart.plot(rpart_results, digits = 3, cex = 1, faclen = 0)
+dev.off()  
+
+printcp(rpart_results)
+
+png("cp_plot.png", width = 1000, height = 600) 
+plotcp <- plotcp(rpart_results, minline=TRUE,lty=3, col=1, upper="splits")
 dev.off()  # Save and close the file
 
 
-printcp(rpart_results)
-plotcp <- plotcp(rpart_results, minline=TRUE,lty=3, col=1, upper="splits")
 
 ##Prune tree based on complexity parameter
-pt<-prune(rpart_results, cp=0.007)
+pt<-prune(rpart_results, cp= 0.01)
 plot2 <- rpart.plot(pt, digits = 3, cex=0.6, faclen=0)
+png("pruned_decision_tree.png", width = 1000, height = 600) 
+rpart.plot(pt, digits = 3, cex=1, faclen=0)
+dev.off()  
 
+##Predict probabilities on the training data
+pred_probs <- predict(pt, newdata = data_train, type = "prob")
 
-##Make predictions on training data
-pt$predbadStatus<-predict(pt, newdata = data_train, type =
-"prob")[,1]
-pt$predgoodStatus<-predict(pt, newdata = data_train, type =
-"prob")[,2]
+##Assign predicted probabilities
+pt$pred_obese <- pred_probs[,2]
+pt$pred_notobese <- pred_probs[,1]
 
 ##Calculate AUC for training set
-pred <- prediction(pt$predgoodStatus, ToPredict)
+pred <- prediction(pt$pred_obese, data_train$Obesity)
 prf <- performance(pred, measure = "tpr", x.measure = "fpr")
-prf_plot <- plot(prf)
-prf_plot
+plot(prf)
+
+png("auc_training.png", width = 1000, height = 600) 
+plot(performance(pred, measure = "tpr", x.measure = "fpr"))
+dev.off()  # Save and close the file
 
 auc <- performance(pred, measure = "auc")
 auc_value <- auc@y.values[[1]]
-auc_value
+print(paste("Training AUC value:", auc_value))
 
-pt$fitted.results <- ifelse(pt$predgoodStatus >= 0.5,"Yes","No")
-table(pt$fitted.results, data_train$Status)
+##Generate classification results
+pt$fitted_results <- ifelse(pt$pred_obese >= 0.5, 1, 0)
+print(table(pt$fitted_results, data_train$Obesity))
 
-resubClassificationError <- mean(pt$fitted.results != data_train$Status)
-```
+resubClassificationError <- mean(pt$fitted_results != data_train$Obesity)
+print(paste("Re-substituition Error rate:", resubClassificationError))
 
-```{r}
-ToPredictTest<-data_test[,c(target)]
+##Predictions on data test set
 
-pt$predbadStatustest<-predict(pt, newdata=data_test, type="prob")[,1]
-pt$predgoodStatustest <- predict(pt, newdata = data_test, type ="prob")[,2]
+pred_probs_test <- predict(pt, newdata = data_test, type = "prob")
 
-predtest <- prediction(pt$predbadStatustest, ToPredictTest)
+# Assign predicted probabilities
+pt$pred_obese <- pred_probs_test[,2]
+pt$pred_notobese <- pred_probs_test[,1]
+
+# Calculate AUC for test set
+predtest <- prediction(pt$pred_obese, data_test$Obesity)
 prftest <- performance(predtest, measure = "tpr", x.measure = "fpr")
 plot(prftest)
 
+png("auc_test.png", width = 1000, height = 600) 
+plot(performance(predtest, measure = "tpr", x.measure = "fpr"))
+dev.off()  # Save and close the file
+
 auc_test <- performance(predtest, measure = "auc")
-auc_test <- auc_test@y.values[[1]]
+auc_test_value <- auc_test@y.values[[1]]
+print(paste("Test AUC value:", auc_test_value))
 
-pt$fitted.results_test<-ifelse(pt$predbadStatustest>=0.5, "Yes", "No")
-table(pt$fitted.results_test, data_test$Status)
+pt$fitted_results_test <- ifelse(pt$pred_obese >= 0.5, 1,0)
+conf_matrix <- table(pt$fitted_results_test, data_test$Obesity)
+conf_matrix
 
-misClassificError<-mean(pt$fitted.results_test != ToPredictTest)
-predaccuracy <- 1-misClassificError
+misClassificError <- mean(pt$fitted_results_test != data_test$Obesity)
+misClassificError
+predaccuracy <- 1 - misClassificError
+predaccuracy
 
+print(paste("Predictive accuracy:", predaccuracy))
+print(paste("Misclassification error:", misClassificError))
+
+##Extracting values from confusion matrix
+TP <- conf_matrix[2, 2]  ##True Positives
+TN <- conf_matrix[1, 1]  ##True Negatives
+FP <- conf_matrix[1, 2]  ##False Positives
+FN <- conf_matrix[2, 1]  ##False Negatives
+
+##Accuracy
+accuracy <- (TP + TN) / sum(conf_matrix)
+
+##Precision
+precision <- TP / (TP + FP)
+
+##Recall (Sensitivity)
+recall <- TP / (TP + FN)
+
+##Print metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
 ```
-Gradient Boosting
+
+
+Extreme Gradient Boosting
+
 ```{r}
-install.packages(gbm)
-library(gbm)
-library(MASS)
 library(xgboost)
+library(caTools)
+library(dplyr)
 
+y_train <- as.integer(data_train$Obesity)
+y_test <- as.integer(data_test$Obesity)
+X_train <- data_train %>% select(-Obesity)
+X_train <- model.matrix(~ . + 0, data = X_train)
+X_test <- data_test %>% select(-Obesity)
+X_test <- model.matrix(~ . + 0, data = X_test)
 
-gbm_model <- gbm(
-  formula = Status ~.,
-  data = data_train,
-  distribution = "gaussian",
-  n.trees = 5000, 
-  interaction.depth = 4,
-  shrinkage = 0.01, 
-  cv.folds = 5
+xgb_train <-xgb.DMatrix(data=as.matrix(X_train), label = as.numeric(y_train))
+xgb_test <- xgb.DMatrix(data=as.matrix(X_test), label = y_test)
+xgb_params <- list(
+  booster = "gbtree",
+  eta = 0.01,
+  max_depth = 8,
+  gamma = 4, 
+  subsample = 0.75,
+  colsample_bytree = 1,
+  objective = "binary:logistic",
+  eval_metric = "logloss"
 )
 
-predictions <- predict(gbm_model, newdata= data_test, n.trees = gbm_model$n.trees)
+xgb_model <- xgb.train(
+  params = xgb_params,
+  data = xgb_train,
+  nrounds = 1000, 
+  verbose = 1
+)
 
-rmse <- sqrt(mean((predictions-data_test$Status)^2))
-print(paste("RMSE:", round(rmse,2)))
+xgb_model
 
-summary(gbm_model)
+
+xgb_preds_prob_train <- predict(xgb_model, as.matrix(X_train))  # Predicted probabilities
+xgb_preds_train <- ifelse(xgb_preds_prob_train > 0.5, 1, 0)
+
+xgb_preds_df_train <- data.frame(
+  PredictedClass = as.factor(xgb_preds_train),
+  ActualClass = as.factor(y_train)
+)
+
+##Calculate accuracy
+accuracy <- sum(xgb_preds_df_train$PredictedClass == xgb_preds_df_train$ActualClass) / nrow(xgb_preds_df_train)
+print(paste("Accuracy:", accuracy))
+
+##Create confusion matrix
+conf_matrix_train <- table(Predicted = xgb_preds_df_train$PredictedClass, Actual = xgb_preds_df_train$ActualClass)
+conf_matrix_train
+
+##Extracting values from confusion matrix
+TP <- conf_matrix_train[2, 2]  
+TN <- conf_matrix_train[1, 1]  
+FP <- conf_matrix_train[1, 2]  
+FN <- conf_matrix_train[2, 1]  
+
+##Accuracy
+accuracy <- (TP + TN) / sum(conf_matrix_train)
+
+##Precision
+precision <- TP / (TP + FP)
+
+##Recall
+recall <- TP / (TP + FN)
+
+##Print metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+
+png("importance_matrix.png", width = 1000, height = 600) 
+importance_matrix <- xgb.importance(feature_names = colnames(X_train), model = xgb_model)
+dev.off() 
+
+##Plot feature importance
+xgb.plot.importance(importance_matrix)
+
+predtrain <- prediction(xgb_preds_prob_train, y_train)
+
+prftrain <- performance(predtrain, measure = "tpr", x.measure = "fpr")
+
+##Plot the ROC curve
+png("auc_train_xgb.png", width = 1000, height = 600) 
+plot(prftrain, main = "ROC Curve")
+dev.off()  
+
+##Calculate AUC (Area Under Curve)
+auc_train <- performance(predtrain, measure = "auc")
+auc_train_value <- auc_train@y.values[[1]]
+
+##Print the AUC value
+print(paste("AUC Value: ", auc_train_value))
+
+
+##Resubstitution Error (Error on training set)
+resubstitution_error <- mean(xgb_preds_train != data_train$Obesity)
+cat("Resubstitution Error:", resubstitution_error, "\n")
+
+##Test set
+
+xgb_preds_prob <- predict(xgb_model, as.matrix(X_test))  
+xgb_preds <- ifelse(xgb_preds_prob > 0.5, 1, 0)
+
+xgb_preds_df <- data.frame(
+  PredictedClass = as.factor(xgb_preds),
+  ActualClass = as.factor(y_test)
+)
+
+##Calculate accuracy
+accuracy <- sum(xgb_preds_df$PredictedClass == xgb_preds_df$ActualClass) / nrow(xgb_preds_df)
+print(paste("Accuracy:", accuracy))
+
+##Create confusion matrix
+conf_matrix <- table(Predicted = xgb_preds_df$PredictedClass, Actual = xgb_preds_df$ActualClass)
+conf_matrix
+
+##Extracting values from confusion matrix
+TP <- conf_matrix[2, 2]  # True Positives
+TN <- conf_matrix[1, 1]  # True Negatives
+FP <- conf_matrix[1, 2]  # False Positives
+FN <- conf_matrix[2, 1]  # False Negatives
+
+##Accuracy
+accuracy <- (TP + TN) / sum(conf_matrix)
+
+##Precision
+precision <- TP / (TP + FP)
+
+##Recall
+recall <- TP / (TP + FN)
+
+##Print metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+
+importance_matrix <- xgb.importance(feature_names = colnames(X_train), model = xgb_model)
+
+##Plot feature importance
+
+xgb.plot.importance(importance_matrix)
+
+predtest <- prediction(xgb_preds_prob, y_test)
+
+##Generate performance for True Positive Rate (TPR) vs. False Positive Rate (FPR)
+prftest <- performance(predtest, measure = "tpr", x.measure = "fpr")
+
+##Plot the ROC curve
+png("auc_test_xgb.png", width = 1000, height = 600) 
+plot(prftest, main = "ROC Curve")
+dev.off()  
+
+
+##Calculate AUC (Area Under Curve)
+auc_test <- performance(predtest, measure = "auc")
+auc_test_value <- auc_test@y.values[[1]]
+
+print(paste("AUC Value: ", auc_test_value))
+
 ```
 
-Support Vector Machine
 ```{r}
-install.packages('e1071')
+library(tidyverse)
 library(e1071)
+library(pROC)
 
-scaled_data_train <- data_train[-12]
-scaled_data_test <- scale(data_test[-12])
+##Ensure 'Obesity' is a factor for classification
+data_train$Obesity <- as.factor(data_train$Obesity)
+data_test$Obesity <- as.factor(data_test$Obesity)
 
-svm <- svm(
-      formula = Status ~ Gender + Car + Property + Children + Income + Income_Type + Education + Marital + Accommodation + Age + Time_Employed + Work_Phone + Phone + Email + Job + Family,
-      data = data_train,
-      type = 'C-classification',
-      kernel = 'linear')
+##Convert categorical variables to dummy variables (excluding target variable)
+train_data <- model.matrix(Obesity ~ . - 1, data = data_train)  # Removes intercept
+test_data <- model.matrix(Obesity ~ . - 1, data = data_test)
 
-prediction <- predict(svm, newdata = scaled_data_test)
+##Convert to data frames
+train_data <- as.data.frame(train_data)
+test_data <- as.data.frame(test_data)
 
-cm = table(scaled_data_test, prediction)
+train_data$Obesity <- data_train$Obesity
+test_data$Obesity <- data_test$Obesity
 
-print(cm)
+num_features <- sapply(train_data, is.numeric)
+
+##Scale numeric features (excluding 'Obesity')
+train_data[, num_features] <- scale(train_data[, num_features])
+test_data[, num_features] <- scale(test_data[, num_features])
+
+svm_model <- svm(Obesity ~ ., data = data_train, 
+                 type = "C-classification", 
+                 kernel = "radial")
+
+summary(svm_model)
+
+##Predict on both training and test data
+svm_pred_train <- predict(svm_model, data_train)
+svm_pred_test <- predict(svm_model, data_test)
+
+##Train data
+##Confusion matrix for test data
+conf_matrix_train <- table(Predicted = svm_pred_train, Actual = data_train$Obesity)
+print("Test Confusion Matrix:")
+print(conf_matrix_train)
+
+##Resubstitution Error (Error on training set)
+resubstitution_error <- mean(svm_pred_train != data_train$Obesity)
+cat("Resubstitution Error:", resubstitution_error, "\n")
+
+# Predictive Accuracy (on train data)
+accuracy_train <- mean(svm_pred_train == data_train$Obesity)
+cat("Predictive Accuracy on Train Data:", accuracy_train, "\n")
+
+##Extracting values from confusion matrix
+TP <- conf_matrix_train[2, 2]  
+TN <- conf_matrix_train[1, 1]  
+FP <- conf_matrix_train[1, 2]  
+FN <- conf_matrix_train[2, 1]  
+
+##Accuracy
+accuracy <- (TP + TN) / sum(conf_matrix_train)
+
+##Precision
+precision <- TP / (TP + FP)
+
+##Recall
+recall <- TP / (TP + FN)
+
+##print metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
 
 
-library(ElemStatLearn) 
-  
-# Plotting the training data set results 
-set = data_train 
-X1 = seq(min(set[, 1]) - 1, max(set[, 1]) + 1, by = 0.01) 
-X2 = seq(min(set[, 2]) - 1, max(set[, 2]) + 1, by = 0.01) 
-  
-grid_set = expand.grid(X1, X2) 
-colnames(grid_set) = c('Age', 'EstimatedSalary') 
-y_grid = predict(classifier, newdata = grid_set) 
-  
-plot(set[, -3], 
-     main = 'SVM (Training set)', 
-     xlab = 'Age', ylab = 'Estimated Salary', 
-     xlim = range(X1), ylim = range(X2)) 
-  
-contour(X1, X2, matrix(as.numeric(y_grid), length(X1), length(X2)), add = TRUE) 
-  
-points(grid_set, pch = '.', col = ifelse(y_grid == 1, 'coral1', 'aquamarine')) 
-  
-points(set, pch = 21, bg = ifelse(set[, 3] == 1, 'green4', 'red3')) 
+# Calculate AUC (Area Under ROC Curve)
+roc_curve <- roc(data_train$Obesity, as.numeric(svm_pred_train))
+png("auc_train_svm.png", width = 1000, height = 600) 
+roc_curve
+dev.off()  # Save and close the file
+auc_value <- auc(roc_curve)
+cat("AUC (Area Under Curve):", auc_value, "\n")
+
+
+## Test data
+##Confusion matrix for test data
+conf_matrix_test <- table(Predicted = svm_pred_test, Actual = data_test$Obesity)
+print("Test Confusion Matrix:")
+conf_matrix_test
+
+##Predictive Accuracy (on test data)
+accuracy_test <- mean(svm_pred_test == data_test$Obesity)
+cat("Predictive Accuracy on Test Data:", accuracy_test, "\n")
+
+##Extracting values from confusion matrix
+TP_t <- conf_matrix_test[2, 2]
+TN_t <- conf_matrix_test[1, 1]  
+FP_t <- conf_matrix_test[1, 2]  
+FN_t <- conf_matrix_test[2, 1]  
+
+##Accuracy
+accuracy <- (TP_t + TN_t) / sum(conf_matrix_test)
+
+##Precision
+precision <- TP_t / (TP_t + FP_t)
+
+##Recall 
+recall <- TP_t / (TP_t + FN_t)
+
+##Print metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+
+##Calculate AUC (Area Under ROC Curve)
+roc_curve <- roc(data_test$Obesity, as.numeric(svm_pred_test))
+png("auc_test_svm.png", width = 1000, height = 600) 
+roc_curve
+dev.off()  # Save and close the file
+auc_value <- auc(roc_curve)
+cat("AUC (Area Under Curve):", auc_value, "\n")
 
 ```
 
-Neural Network Code
 ```{r}
-install.packages(c('neuralnet', 'keras', 'tensorflow'), dependencies = T)
-library(neuralnet)
-data_train <- na.omit(data_train)
-data_test <- na.omit(data_test)
+if (!requireNamespace("lme4", quietly = TRUE)) {
+  install.packages("lme4")
+}
+library(lme4)
 
-neural_model <- neuralnet(Status ~.,
-                           data = data_train,
-                           hidden = c(4,2), 
-                           linear.output=FALSE)
+res_logistic <- glm(Obesity ~ family_history_with_overweight + Age 
+                    +Gender + FAVC + FCVC + NCP + CAEC 
+                    + SMOKE + CH2O + SCC + FAF + TUE + CALC
+                    + MTRANS ,data=data_train, family=binomial())
+##removed height cause greatest vif
+##removed weight cause high corr with obesity
 
-plot(neural_model,rep = "best")
 
-pred <- predict(neural_model, data_test)
-labels <- c(0, 1)
-prediction_label <- data.frame(max.col(pred)) %>%
-  mutate(pred = labels[max.col(pred)]) %>%
-  pull(pred)   
+summary(res_logistic)
+exp(cbind(OR=coef(res_logistic),
+confint.default(res_logistic)))
 
-max(prediction_label)
-table(data_test$Status, prediction_label)
+data_train$predobese <- predict(res_logistic, newdata = data_train,
+type = "response")
+data_train$prednotobese<-1-data_train$predobese
+#If 50% probability cut-off
+data_train$fitted.results <- ifelse(data_train$prednotobese >
+0.5,1,0)
 
-check = as.numeric(data_test$Status) == max.col(pred)
-accuracy = (sum(check)/nrow(data_test))*100
-print(accuracy)
+resub_Errorrate <- mean(data_train$fitted.results != data_train$Obesity)
+resub_Errorrate
+table(data_train$Obesity, data_train$fitted.results)
+
+pr <- prediction(data_train$predobese, data_train$Obesity)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+
+
+
+if (!requireNamespace("car", quietly = TRUE)) {
+  install.packages("car")
+}
+library(car)
+car::vif(res_logistic)
+
+res_logistic_step <- step(res_logistic,direction="forward",trace=TRUE)
+
+summary(res_logistic_step)
+
+
+##TEST DATA
+
+data_test$predobese <- predict(res_logistic, newdata = data_test,
+type = "response")
+data_test$prednotobese<-1-data_test$predobese
+#If 50% probability cut-off
+data_test$fitted.results <- ifelse(data_test$prednotobese >
+0.5,0,1)
+
+resub_Errorrate <- mean(data_test$fitted.results != data_test$Obesity)
+resub_Errorrate
+conf_matrix_log <- table(data_test$Obesity, data_test$fitted.results)
+conf_matrix_log
+
+##Extracting values from confusion matrix
+TP <- conf_matrix_log[2, 2]  # True Positives
+TN <- conf_matrix_log[1, 1]  # True Negatives
+FP <- conf_matrix_log[1, 2]  # False Positives
+FN <- conf_matrix_log[2, 1]  # False Negatives
+
+##Accuracy
+accuracy <- (TP + TN) / sum(conf_matrix_log)
+
+##Precision
+precision <- TP / (TP + FP)
+
+##Recall
+recall <- TP / (TP + FN)
+
+##Print metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+
+pr <- prediction(data_test$predobese, data_test$Obesity)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+
 
 ```
+```{r}
+if (!requireNamespace("naivebayes", quietly = TRUE)) {
+  install.packages("naivebayes")
+}
+# Load the necessary library
+library(naivebayes)
+
+# Train the Naive Bayes model with Laplace smoothing
+nb <- naive_bayes(Obesity ~ ., data = data_train, laplace = 1)
+
+# View summary of the model
+summary(nb)
+
+# Predict the classes on the training data
+nb_predictions <- predict(nb, data_train[, -which(names(data_train) == "Obesity")], type = "class")
+
+# Predict the probabilities on the training data
+nb_probs <- predict(nb, data_train[, -which(names(data_train) == "Obesity")], type = "prob")
+
+# View the conditional probability tables
+# This will show you the tables (distributions) for each feature
+print(nb$tables)
+
+# Optional: Check the prior probabilities of the classes
+print(nb$prior)
+
+# Check the model performance (if needed)
+# For example, calculate accuracy
+accuracy <- sum(nb_predictions == data_train$Obesity) / nrow(data_train)
+print(paste("Accuracy:", accuracy))
+
+```
+
+
 
 
 ```{r}
@@ -294,14 +654,14 @@ library(e1071)
 library(pROC)
 
 # Train Naive Bayes model
-nb_model <- naiveBayes(Status ~ ., data=data_train)
+nb_model <- naiveBayes(Obesity ~ ., data=data_train)
 
 # Make predictions
 nb_pred <- predict(nb_model, newdata=data_test, type="class")
 nb_prob <- predict(nb_model, newdata=data_test, type="raw")
 
 # Create confusion matrix
-confusion_matrix_nb <- table(Actual = data_test$Status, Predicted = nb_pred)
+confusion_matrix_nb <- table(Actual = data_test$Obesity, Predicted = nb_pred)
 print(confusion_matrix_nb)
 
 # Accuracy
@@ -309,11 +669,11 @@ accuracy_nb <- sum(diag(confusion_matrix_nb)) / sum(confusion_matrix_nb)
 print(paste("Accuracy: ", accuracy_nb))
 
 # Log-Likelihood Calculation
-log_likelihood <- sum(log(nb_prob[cbind(1:nrow(nb_prob), as.numeric(data_test$Status))]))
+log_likelihood <- sum(log(nb_prob[cbind(1:nrow(nb_prob), as.numeric(data_test$Obesity))]))
 print(paste("Log-Likelihood: ", log_likelihood))
 
 # ROC Curve
-roc_curve_nb <- roc(data_test$Status, nb_prob[,2])  # assuming STATUS_NUM is binary for 1 vs 0
+roc_curve_nb <- roc(data_test$Obesity, nb_prob[,2])  # assuming Obesity_NUM is binary for 1 vs 0
 plot(roc_curve_nb, main="ROC Curve for Naive Bayes")
 ```
 
