@@ -4,7 +4,7 @@ author: "Shane Gallagher"
 date: "2025-03-10"
 output: html_document
 ---
-
+libraries
 ```{r}
 ##Import library
 library(readr)  
@@ -20,7 +20,7 @@ if (!requireNamespace("ROCR", quietly = TRUE)) {
 library(ROCR)
 ```
 
-
+Data processing/cleaning
 ```{r}
 ##Import the datasets
 obesity_nonbinary <- readr::read_csv('ObesityDataSet.csv')
@@ -73,7 +73,7 @@ cor_matrix <- cor(numeric_features)
 ##Visualize correlations
 corrplot(cor_matrix, method = "color", tl.cex = 0.7, type = "lower")
 ```
-
+Creation of the test, train and validation datasets
 
 ```{r}
 ##No of observations in data
@@ -400,7 +400,7 @@ auc_test_value <- auc_test@y.values[[1]]
 print(paste("AUC Value: ", auc_test_value))
 
 ```
-
+SVM MODEL
 ```{r}
 library(tidyverse)
 library(e1071)
@@ -521,6 +521,8 @@ cat("AUC (Area Under Curve):", auc_value, "\n")
 
 ```
 
+LOGISTIC REGRESSION
+
 ```{r}
 if (!requireNamespace("lme4", quietly = TRUE)) {
   install.packages("lme4")
@@ -638,43 +640,7 @@ print(paste("Resubstitution Error:", resub_error_log))
 
 
 
-
-```
-```{r}
-if (!requireNamespace("naivebayes", quietly = TRUE)) {
-  install.packages("naivebayes")
-}
-# Load the necessary library
-library(naivebayes)
-
-# Train the Naive Bayes model with Laplace smoothing
-nb <- naive_bayes(Obesity ~ ., data = data_train, laplace = 1)
-
-# View summary of the model
-summary(nb)
-
-# Predict the classes on the training data
-nb_predictions <- predict(nb, data_train[, -which(names(data_train) == "Obesity")], type = "class")
-
-# Predict the probabilities on the training data
-nb_probs <- predict(nb, data_train[, -which(names(data_train) == "Obesity")], type = "prob")
-
-# View the conditional probability tables
-# This will show you the tables (distributions) for each feature
-print(nb$tables)
-
-# Optional: Check the prior probabilities of the classes
-print(nb$prior)
-
-# Check the model performance (if needed)
-# For example, calculate accuracy
-accuracy <- sum(nb_predictions == data_train$Obesity) / nrow(data_train)
-print(paste("Accuracy:", accuracy))
-
-```
-
-
-
+NAIVE BAYES 
 
 ```{r}
 library(e1071)
