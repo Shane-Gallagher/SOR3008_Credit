@@ -557,13 +557,29 @@ auc <- performance(pr, measure = "auc")
 auc <- auc@y.values[[1]]
 auc
 
+#Package installation
+
+remove.packages("cli")
+
+install.packages("cli")
+
+install.packages("broom")
+install.packages("pbkrtest")
+remove.packages("Matrix")
+
+install.packages("Matrix", type="source")
 
 
-if (!requireNamespace("car", quietly = TRUE)) {
-  install.packages("car")
-}
+install.packages("car")
+
 library(car)
+
+
+"car" %in% rownames(installed.packages())
+
 car::vif(res_logistic)
+
+summary(res_logistic)
 
 res_logistic_step <- step(res_logistic,direction="forward",trace=TRUE)
 
@@ -605,11 +621,22 @@ cat("Precision: ", precision, "\n")
 cat("Recall: ", recall, "\n")
 
 pr <- prediction(data_test$predobese, data_test$Obesity)
+
 prf <- performance(pr, measure = "tpr", x.measure = "fpr")
 plot(prf)
 auc <- performance(pr, measure = "auc")
 auc <- auc@y.values[[1]]
 auc
+
+# Calculate resubstitution accuracy
+resub_accuracy_log <- sum(diag(conf_matrix_log)) / sum(conf_matrix_log)
+
+# Resubstitution error is 1 - accuracy
+resub_error_log <- 1 - resub_accuracy_log
+
+print(paste("Resubstitution Error:", resub_error_log))
+
+
 
 
 ```
@@ -656,17 +683,40 @@ library(pROC)
 # Train Naive Bayes model
 nb_model <- naiveBayes(Obesity ~ ., data=data_train)
 
+nb_model
+
 # Make predictions
 nb_pred <- predict(nb_model, newdata=data_test, type="class")
 nb_prob <- predict(nb_model, newdata=data_test, type="raw")
+
+print(nb_pred)
+print(nb_prob)
 
 # Create confusion matrix
 confusion_matrix_nb <- table(Actual = data_test$Obesity, Predicted = nb_pred)
 print(confusion_matrix_nb)
 
+TP <- confusion_matrix_nb[2, 2]
+FP <- confusion_matrix_nb[1, 2]
+FN <- confusion_matrix_nb[2,1]
+TN <- confusion_matrix_nb[1,1]
+
+
 # Accuracy
 accuracy_nb <- sum(diag(confusion_matrix_nb)) / sum(confusion_matrix_nb)
 print(paste("Accuracy: ", accuracy_nb))
+
+#Precision
+precision_nb <- TP / (TP + FP)
+print(paste("Precision:", precision_nb))
+
+#Recall
+Recall_nb <- TP / (TP + FN)
+print(paste("Recall:", Recall_nb))
+
+#F1-Score
+F1_score <- 2 * (precision * Recall) / (precision + Recall)
+print(paste("F1 score:", F1_score))
 
 # Log-Likelihood Calculation
 log_likelihood <- sum(log(nb_prob[cbind(1:nrow(nb_prob), as.numeric(data_test$Obesity))]))
@@ -675,5 +725,17 @@ print(paste("Log-Likelihood: ", log_likelihood))
 # ROC Curve
 roc_curve_nb <- roc(data_test$Obesity, nb_prob[,2])  # assuming Obesity_NUM is binary for 1 vs 0
 plot(roc_curve_nb, main="ROC Curve for Naive Bayes")
+
+auc_value_nb <- auc(roc_curve_nb)
+
+print(paste("AUC:", auc_value_nb))
+
+# Calculate resubstitution accuracy
+resub_accuracy_nb <- sum(diag(confusion_matrix_nb)) / sum(confusion_matrix_nb)
+
+# Resubstitution error is 1 - accuracy
+resub_error_nb <- 1 - resub_accuracy_nb
+
+print(paste("Resubstitution Error:", resub_error_nb))
 ```
 
